@@ -1,0 +1,62 @@
+diff --git a/lib/controller.js b/lib/controller.js
+index 3fded4ee..0e25521e 100644
+--- a/lib/controller.js
++++ b/lib/controller.js
+@@ -25,6 +25,7 @@ const ExtensionBind = require('./extension/bind');
+ const ExtensionReport = require('./extension/report');
+ const ExtensionOnEvent = require('./extension/onEvent');
+ const ExtensionOTAUpdate = require('./extension/otaUpdate');
++const zosungSupport = require('./util/zosungSupport');
+ 
+ class Controller {
+     constructor() {
+@@ -100,6 +101,10 @@ class Controller {
+         const info = await utils.getZigbee2mqttVersion();
+         logger.info(`Starting zigbee2mqtt version ${info.version} (commit #${info.commitHash})`);
+ 
++        // Initialize Zosung IR Blaster (TS1201) support
++        // Registers custom clusters and device definition before Zigbee starts
++        zosungSupport.initialize();
++
+         // Start zigbee
+         try {
+             await this.zigbee.start();
+@@ -231,7 +236,7 @@ class Controller {
+         }
+ 
+         // Call extensions
+-        this.callExtensionMethod('onZigbeeEvent', [type, data, resolvedEntity]);
++        await this.callExtensionMethod('onZigbeeEvent', [type, data, resolvedEntity]);
+     }
+ 
+     onMQTTMessage(payload) {
+diff --git a/lib/extension/receive.js b/lib/extension/receive.js
+index 4e02b41f..36fcae1f 100755
+--- a/lib/extension/receive.js
++++ b/lib/extension/receive.js
+@@ -96,7 +96,7 @@ class Receive extends Extension {
+         return true;
+     }
+ 
+-    onZigbeeEvent(type, data, resolvedEntity) {
++    async onZigbeeEvent(type, data, resolvedEntity) {
+         if (!this.shouldProcess(type, data, resolvedEntity)) {
+             return;
+         }
+@@ -148,13 +148,13 @@ class Receive extends Extension {
+ 
+         const meta = {device: data.device};
+         let payload = {};
+-        converters.forEach((converter) => {
++        for (const converter of converters) {
+             const options = {...settings.get().device_options, ...settings.getDevice(data.device.ieeeAddr)};
+-            const converted = converter.convert(resolvedEntity.definition, data, publish, options, meta);
++            const converted = await converter.convert(resolvedEntity.definition, data, publish, options, meta);
+             if (converted) {
+                 payload = {...payload, ...converted};
+             }
+-        });
++        }
+ 
+         if (Object.keys(payload).length) {
+             publish(payload);
