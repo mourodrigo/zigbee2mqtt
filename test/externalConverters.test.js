@@ -58,8 +58,6 @@ describe('Loads external converters', () => {
         settings.reRead();
         mocksClear.forEach((m) => m.mockClear());
         await resetExtension();
-        // Clear after resetExtension so tests only track calls from their own resetExtension
-        zigbeeHerdsmanConverters.addDeviceDefinition.mockClear();
     });
 
     afterAll(async () => {
@@ -69,8 +67,7 @@ describe('Loads external converters', () => {
     it('Does not load external converters', async () => {
         settings.set(['external_converters'], []);
         await resetExtension();
-        // 1 call for built-in TS1201 registration, 0 for external converters
-        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenCalledTimes(1);
+        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenCalledTimes(0);
     });
 
     it('Loads external converters', async () => {
@@ -78,9 +75,8 @@ describe('Loads external converters', () => {
         const devicesCount = zigbeeHerdsman.devices.lenght;
         settings.set(['external_converters'], ['mock-external-converter.js']);
         await resetExtension();
-        // 1 call for built-in TS1201 registration + 1 for external converter
-        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenCalledTimes(2);
-        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenNthCalledWith(2, {
+        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenCalledTimes(1);
+        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenCalledWith({
             mock: true,
             zigbeeModel: ['external_converter_device'],
             vendor: 'external',
@@ -97,9 +93,8 @@ describe('Loads external converters', () => {
         const devicesCount = zigbeeHerdsman.devices.lenght;
         settings.set(['external_converters'], ['mock-external-converter-multiple.js']);
         await resetExtension();
-        // 1 call for built-in TS1201 registration + 2 for external converters
-        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenCalledTimes(3);
-        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenNthCalledWith(2, {
+        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenCalledTimes(2);
+        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenNthCalledWith(1, {
             mock: 1,
             model: 'external_converters_device_1',
             zigbeeModel: ['external_converter_device_1'],
@@ -109,7 +104,7 @@ describe('Loads external converters', () => {
             toZigbee: [],
             exposes: []
         });
-        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenNthCalledWith(3, {
+        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenNthCalledWith(2, {
             mock: 2,
             model: 'external_converters_device_2',
             zigbeeModel: ['external_converter_device_2'],
@@ -124,9 +119,8 @@ describe('Loads external converters', () => {
     it('Loads external converters from package', async () => {
         settings.set(['external_converters'], ['mock-external-converter-module']);
         await resetExtension();
-        // 1 call for built-in TS1201 registration + 1 for external converter
-        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenCalledTimes(2);
-        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenNthCalledWith(2, {
+        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenCalledTimes(1);
+        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenCalledWith({
             mock: true
         });
     });
@@ -134,12 +128,11 @@ describe('Loads external converters', () => {
     it('Loads multiple external converters from package', async () => {
         settings.set(['external_converters'], ['mock-multiple-external-converter-module']);
         await resetExtension();
-        // 1 call for built-in TS1201 registration + 2 for external converters
-        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenCalledTimes(3);
-        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenNthCalledWith(2, {
+        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenCalledTimes(2);
+        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenNthCalledWith(1, {
             mock: 1
         });
-        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenNthCalledWith(3, {
+        expect(zigbeeHerdsmanConverters.addDeviceDefinition).toHaveBeenNthCalledWith(2, {
             mock: 2
         });
     });
