@@ -41,7 +41,7 @@ This is the core module that adds TS1201 support. It:
    - `_TZ3290_8xzb2ghn`
    - `_TZ3290_s6ezpa3j`
 
-### Modified: `lib/controller.js` (2 changes)
+### Modified: `lib/controller.js` (3 changes)
 
 1. **Import zosungSupport** — adds `require('./util/zosungSupport')` at the top
 2. **Initialize before Zigbee start** — calls `zosungSupport.initialize()` before
