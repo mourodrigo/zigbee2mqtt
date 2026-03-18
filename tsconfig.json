@@ -1,22 +1,27 @@
 {
     "compilerOptions": {
-        "allowSyntheticDefaultImports": true,
-        "module": "NodeNext",
+        "module": "commonjs",
         "esModuleInterop": true,
-        "target": "esnext",
-        "lib": ["esnext"],
-        "strict": true,
+        "target": "es2018",
+        "lib": ["es2018"],
         "noImplicitAny": true,
         "noImplicitThis": true,
+        "moduleResolution": "node",
         "declaration": true,
         "declarationMap": true,
         "outDir": "dist",
         "baseUrl": ".",
+        "allowJs": true,
         "rootDir": "lib",
         "inlineSourceMap": true,
         "resolveJsonModule": true,
-        "experimentalDecorators": true,
-        "composite": true
+        "experimentalDecorators": true
     },
-    "include": ["./lib/**/*", "./lib/util/settings.schema.json"]
+    "include": [
+        "lib/**/*",
+        "lib/util/settings.schema.json"
+    ],
+    "exclude": [
+        "node_modules"
+    ],
 }

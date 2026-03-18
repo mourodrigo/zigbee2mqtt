@@ -9,4 +9,9 @@ fi
 
 echo "Using '$DATA' as data directory"
 
+if [ ! -f "$DATA/configuration.yaml" ]; then
+    echo "Creating configuration file..."
+    cp /app/configuration.example.yaml "$DATA/configuration.yaml"
+fi
+
 exec "$@"

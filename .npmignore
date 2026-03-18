@@ -8,7 +8,6 @@ coverage
 .codeclimate.yml
 .github
 babel.config.js
-tsconfig.tsbuildinfo
 
 #linters
 .jscsrc

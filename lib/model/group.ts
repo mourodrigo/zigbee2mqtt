@@ -1,64 +1,33 @@
-import type * as zhc from "zigbee-herdsman-converters";
-import * as settings from "../util/settings";
-import {DEFAULT_BIND_GROUP_ID} from "../util/utils";
+/* eslint-disable brace-style */
+import * as settings from '../util/settings';
+import zigbeeHerdsmanConverters from 'zigbee-herdsman-converters';
 
 export default class Group {
     public zh: zh.Group;
-    private resolveDevice: (ieeeAddr: string) => Device | undefined;
+    private resolveDevice: (ieeeAddr: string) => Device;
 
-    // biome-ignore lint/style/useNamingConvention: API
-    get ID(): number {
-        return this.zh.groupID;
-    }
-    get options(): GroupOptions {
-        // biome-ignore lint/style/noNonNullAssertion: Group always exists in settings
-        return {...settings.getGroup(this.ID)!};
-    }
-    get name(): string {
-        return this.options?.friendly_name || this.ID.toString();
-    }
+    get ID(): number {return this.zh.groupID;}
+    get options(): GroupOptions {return {...settings.getGroup(this.ID)};}
+    get name(): string {return this.options?.friendly_name || this.ID.toString();}
 
-    constructor(group: zh.Group, resolveDevice: (ieeeAddr: string) => Device | undefined) {
+    constructor(group: zh.Group, resolveDevice: (ieeeAddr: string) => Device) {
         this.zh = group;
         this.resolveDevice = resolveDevice;
-    }
-
-    ensureInSettings(): void {
-        if (this.ID !== DEFAULT_BIND_GROUP_ID && !settings.getGroup(this.ID)) {
-            settings.addGroup(this.name, this.ID.toString());
-        }
     }
 
     hasMember(device: Device): boolean {
         return !!device.zh.endpoints.find((e) => this.zh.members.includes(e));
     }
 
-    *membersDevices(): Generator<Device> {
-        for (const member of this.zh.members) {
-            const resolvedDevice = this.resolveDevice(member.deviceIeeeAddress);
-
-            if (resolvedDevice) {
-                yield resolvedDevice;
-            }
-        }
+    membersDevices(): Device[] {
+        return this.zh.members.map((e) => this.resolveDevice(e.getDevice().ieeeAddr)).filter((d) => d);
     }
 
     membersDefinitions(): zhc.Definition[] {
-        const definitions: zhc.Definition[] = [];
-
-        for (const member of this.membersDevices()) {
-            if (member.definition) {
-                definitions.push(member.definition);
-            }
-        }
-
-        return definitions;
+        return this.zh.members.map((m) =>
+            zigbeeHerdsmanConverters.findByDevice(m.getDevice())).filter((d) => d) as zhc.Definition[];
     }
 
-    isDevice(): this is Device {
-        return false;
-    }
-    isGroup(): this is Group {
-        return true;
-    }
+    isDevice(): this is Device {return false;}
+    isGroup(): this is Group {return true;}
 }

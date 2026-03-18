@@ -1,14 +1,9 @@
-declare module "zigbee2mqtt-frontend" {
-    const frontend: {
-        getPath: () => string;
-    };
-
-    export default frontend;
+declare module 'zigbee2mqtt-frontend' {
+    export function getPath(): string;
 }
 
-declare module "http" {
-    interface IncomingMessage {
-        originalUrl?: string;
-        path?: string;
-    }
+declare module 'connect-gzip-static' {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    export type RequestHandler = (req: any, res: any) => void;
+    export default function gzipStatic(root: string, options?: Record<string, unknown>): RequestHandler;
 }

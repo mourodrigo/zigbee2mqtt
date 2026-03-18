@@ -1,10 +1,17 @@
-import path from "node:path";
+import path from 'path';
 
-function setPath(): string {
-    return process.env.ZIGBEE2MQTT_DATA ? process.env.ZIGBEE2MQTT_DATA : path.normalize(path.join(__dirname, "..", "..", "data"));
+let dataPath: string = null;
+
+function load(): void {
+    if (process.env.ZIGBEE2MQTT_DATA) {
+        dataPath = process.env.ZIGBEE2MQTT_DATA;
+    } else {
+        dataPath = path.join(__dirname, '..', '..', 'data');
+        dataPath = path.normalize(dataPath);
+    }
 }
 
-let dataPath = setPath();
+load();
 
 function joinPath(file: string): string {
     return path.resolve(dataPath, file);
@@ -14,9 +21,9 @@ function getPath(): string {
     return dataPath;
 }
 
-function _testReload(): void {
-    dataPath = setPath();
+// eslint-disable-next-line camelcase
+function testingOnlyReload(): void {
+    load();
 }
 
-// biome-ignore lint/style/useNamingConvention: test
-export default {joinPath, getPath, _testReload};
+export default {joinPath, getPath, testingOnlyReload};
