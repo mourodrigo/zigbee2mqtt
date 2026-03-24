@@ -1,44 +1,25 @@
-import assert from "node:assert";
-import fs from "node:fs";
-
-import equals from "fast-deep-equal/es6";
-import yaml, {YAMLException} from "js-yaml";
-
-export class YAMLFileException extends YAMLException {
-    file: string;
-
-    constructor(error: YAMLException, file: string) {
-        super(error.reason, error.mark);
-
-        this.name = "YAMLFileException";
-        this.cause = error.cause;
-        this.message = error.message;
-        this.stack = error.stack;
-        this.file = file;
-    }
-}
+import yaml from 'js-yaml';
+import fs from 'fs';
+import equals from 'fast-deep-equal/es6';
 
 function read(file: string): KeyValue {
     try {
-        const result = yaml.load(fs.readFileSync(file, "utf8"));
-        assert(result instanceof Object, `The content of ${file} is expected to be an object`);
-        return result as KeyValue;
+        return yaml.load(fs.readFileSync(file, 'utf8'));
     } catch (error) {
-        if (error instanceof YAMLException) {
-            throw new YAMLFileException(error, file);
+        if (error.name === 'YAMLException') {
+            error.file = file;
         }
 
         throw error;
     }
 }
 
-function readIfExists(file: string, fallback: KeyValue = {}): KeyValue {
-    return fs.existsSync(file) ? read(file) : fallback;
+function readIfExists(file: string, default_?: KeyValue): KeyValue {
+    return fs.existsSync(file) ? read(file) : default_;
 }
 
 function writeIfChanged(file: string, content: KeyValue): void {
     const before = readIfExists(file);
-
     if (!equals(before, content)) {
         fs.writeFileSync(file, yaml.dump(content));
     }

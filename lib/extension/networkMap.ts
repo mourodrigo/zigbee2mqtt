@@ -1,74 +1,91 @@
-import bind from "bind-decorator";
-import stringify from "json-stable-stringify-without-jsonify";
-import type {Eui64} from "zigbee-herdsman/dist/zspec/tstypes";
-import type {LQITableEntry, RoutingTableEntry} from "zigbee-herdsman/dist/zspec/zdo/definition/tstypes";
-import type {Zigbee2MQTTAPI, Zigbee2MQTTNetworkMap} from "../types/api";
-import logger from "../util/logger";
-import * as settings from "../util/settings";
-import utils from "../util/utils";
-import Extension from "./extension";
+import * as settings from '../util/settings';
+import utils from '../util/utils';
+import logger from '../util/logger';
+import stringify from 'json-stable-stringify-without-jsonify';
+import Extension from './extension';
+import bind from 'bind-decorator';
 
-const SUPPORTED_FORMATS = ["raw", "graphviz", "plantuml"];
+interface Link {
+    source: {ieeeAddr: string, networkAddress: number}, target: {ieeeAddr: string, networkAddress: number},
+    linkquality: number, depth: number, routes: zh.RoutingTableEntry[],
+    sourceIeeeAddr: string, targetIeeeAddr: string, sourceNwkAddr: number, lqi: number, relationship: number,
+}
+
+interface Topology {
+    nodes: {
+        ieeeAddr: string, friendlyName: string, type: string, networkAddress: number, manufacturerName: string,
+        modelID: string, failed: string[], lastSeen: number,
+        definition: {model: string, vendor: string, supports: string, description: string}}[],
+    links: Link[],
+}
 
 /**
  * This extension creates a network map
  */
 export default class NetworkMap extends Extension {
-    #topic = `${settings.get().mqtt.base_topic}/bridge/request/networkmap`;
+    private legacyApi = settings.get().advanced.legacy_api;
+    private legacyTopic = `${settings.get().mqtt.base_topic}/bridge/networkmap`;
+    private legacyTopicRoutes = `${settings.get().mqtt.base_topic}/bridge/networkmap/routes`;
+    private topic = `${settings.get().mqtt.base_topic}/bridge/request/networkmap`;
+    private supportedFormats: {[s: string]: (topology: Topology) => KeyValue | string};
 
-    // biome-ignore lint/suspicious/useAwait: API
     override async start(): Promise<void> {
         this.eventBus.onMQTTMessage(this, this.onMQTTMessage);
+        this.supportedFormats = {
+            'raw': this.raw,
+            'graphviz': this.graphviz,
+            'plantuml': this.plantuml,
+        };
     }
 
     @bind async onMQTTMessage(data: eventdata.MQTTMessage): Promise<void> {
-        if (data.topic === this.#topic) {
-            const message = utils.parseJSON(data.message, data.message) as Zigbee2MQTTAPI["bridge/request/networkmap"];
+        /* istanbul ignore else */
+        if (this.legacyApi) {
+            if ((data.topic === this.legacyTopic || data.topic === this.legacyTopicRoutes) &&
+                this.supportedFormats.hasOwnProperty(data.message)) {
+                const includeRoutes = data.topic === this.legacyTopicRoutes;
+                const topology = await this.networkScan(includeRoutes);
+                let converted = this.supportedFormats[data.message](topology);
+                converted = data.message === 'raw' ? stringify(converted) : converted;
+                this.mqtt.publish(`bridge/networkmap/${data.message}`, converted as string, {});
+            }
+        }
 
+        if (data.topic === this.topic) {
+            const message = utils.parseJSON(data.message, data.message);
             try {
-                const type = typeof message === "object" ? message.type : message;
-
-                if (!SUPPORTED_FORMATS.includes(type)) {
-                    throw new Error(`Type '${type}' not supported, allowed are: ${SUPPORTED_FORMATS.join(",")}`);
+                const type = typeof message === 'object' ? message.type : message;
+                if (!this.supportedFormats.hasOwnProperty(type)) {
+                    throw new Error(`Type '${type}' not supported, allowed are: ${Object.keys(this.supportedFormats)}`);
                 }
 
-                const routes = typeof message === "object" && message.routes;
+                const routes = typeof message === 'object' && message.routes;
                 const topology = await this.networkScan(routes);
-                let responseData: Zigbee2MQTTAPI["bridge/response/networkmap"];
-
-                switch (type) {
-                    case "raw": {
-                        responseData = {type, routes, value: this.raw(topology)};
-                        break;
-                    }
-                    case "graphviz": {
-                        responseData = {type, routes, value: this.graphviz(topology)};
-                        break;
-                    }
-                    case "plantuml": {
-                        responseData = {type, routes, value: this.plantuml(topology)};
-                        break;
-                    }
-                }
-
-                await this.mqtt.publish("bridge/response/networkmap", stringify(utils.getResponse(message, responseData)));
+                const value = this.supportedFormats[type](topology);
+                await this.mqtt.publish(
+                    'bridge/response/networkmap',
+                    stringify(utils.getResponse(message, {routes, type, value}, null)),
+                );
             } catch (error) {
-                await this.mqtt.publish("bridge/response/networkmap", stringify(utils.getResponse(message, {}, (error as Error).message)));
+                await this.mqtt.publish(
+                    'bridge/response/networkmap',
+                    stringify(utils.getResponse(message, {}, error.message)),
+                );
             }
         }
     }
 
-    raw(topology: Zigbee2MQTTNetworkMap): Zigbee2MQTTNetworkMap {
+    @bind raw(topology: Topology): KeyValue {
         return topology;
     }
 
-    graphviz(topology: Zigbee2MQTTNetworkMap): string {
+    @bind graphviz(topology: Topology): string {
         const colors = settings.get().map_options.graphviz.colors;
 
-        let text = "digraph G {\nnode[shape=record];\n";
-        let style = "";
+        let text = 'digraph G {\nnode[shape=record];\n';
+        let style = '';
 
-        for (const node of topology.nodes) {
+        topology.nodes.forEach((node) => {
             const labels = [];
 
             // Add friendly name
@@ -76,256 +93,229 @@ export default class NetworkMap extends Extension {
 
             // Add the device short network address, ieeaddr and scan note (if any)
             labels.push(
-                `${node.ieeeAddr} (${utils.toNetworkAddressHex(node.networkAddress)})${node.failed?.length ? `failed: ${node.failed.join(",")}` : ""}`,
+                `${node.ieeeAddr} (${utils.toNetworkAddressHex(node.networkAddress)})` +
+                ((node.failed && node.failed.length) ? `failed: ${node.failed.join(',')}` : ''),
             );
 
             // Add the device model
-            if (node.type !== "Coordinator") {
-                labels.push(`${node.definition?.vendor} ${node.definition?.description} (${node.definition?.model})`);
+            if (node.type !== 'Coordinator') {
+                if (node.definition) {
+                    labels.push(`${node.definition.vendor} ${node.definition.description} (${node.definition.model})`);
+                } else {
+                    // This model is not supported by zigbee-herdsman-converters, add zigbee model information
+                    labels.push(`${node.manufacturerName} ${node.modelID}`);
+                }
             }
 
             // Add the device last_seen timestamp
-            let lastSeen = "unknown";
-            const date = node.type === "Coordinator" ? Date.now() : node.lastSeen;
+            let lastSeen = 'unknown';
+            const date = node.type === 'Coordinator' ? Date.now() : node.lastSeen;
             if (date) {
-                lastSeen = utils.formatDate(date, "relative") as string;
+                lastSeen = utils.formatDate(date, 'relative') as string;
             }
 
             labels.push(lastSeen);
-            // Escape backslashes and double-quotes to avoid breaking Graphviz .dot files.
-            const escapedLabels = labels.map((label) => label.replace(/\\/g, "\\\\").replace(/"/g, '\\"'));
 
             // Shape the record according to device type
-            if (node.type === "Coordinator") {
-                style = `style="bold, filled", fillcolor="${colors.fill.coordinator}", fontcolor="${colors.font.coordinator}"`;
-            } else if (node.type === "Router") {
-                style = `style="rounded, filled", fillcolor="${colors.fill.router}", fontcolor="${colors.font.router}"`;
+            if (node.type == 'Coordinator') {
+                style = `style="bold, filled", fillcolor="${colors.fill.coordinator}", ` +
+                    `fontcolor="${colors.font.coordinator}"`;
+            } else if (node.type == 'Router') {
+                style = `style="rounded, filled", fillcolor="${colors.fill.router}", ` +
+                    `fontcolor="${colors.font.router}"`;
             } else {
-                style = `style="rounded, dashed, filled", fillcolor="${colors.fill.enddevice}", fontcolor="${colors.font.enddevice}"`;
+                style = `style="rounded, dashed, filled", fillcolor="${colors.fill.enddevice}", ` +
+                    `fontcolor="${colors.font.enddevice}"`;
             }
 
             // Add the device with its labels to the graph as a node.
-            text += `  "${node.ieeeAddr}" [${style}, label="{${escapedLabels.join("|")}}"];\n`;
+            text += `  "${node.ieeeAddr}" [`+style+`, label="{${labels.join('|')}}"];\n`;
 
             /**
              * Add an edge between the device and its child to the graph
              * NOTE: There are situations where a device is NOT in the topology, this can be e.g.
              * due to not responded to the lqi scan. In that case we do not add an edge for this device.
              */
-            for (const link of topology.links) {
-                if (link.source.ieeeAddr === node.ieeeAddr) {
-                    const lineStyle = node.type === "EndDevice" ? "penwidth=1, " : !link.routes.length ? "penwidth=0.5, " : "penwidth=2, ";
-                    const lineWeight = !link.routes.length
-                        ? `weight=0, color="${colors.line.inactive}", `
-                        : `weight=1, color="${colors.line.active}", `;
-                    const textRoutes = link.routes.map((r) => utils.toNetworkAddressHex(r.destinationAddress));
-                    const lineLabels = !link.routes.length
-                        ? `label="${link.linkquality}"`
-                        : `label="${link.linkquality} (routes: ${textRoutes.join(",")})"`;
-                    text += `  "${node.ieeeAddr}" -> "${link.target.ieeeAddr}"`;
-                    text += ` [${lineStyle}${lineWeight}${lineLabels}]\n`;
-                }
-            }
-        }
+            topology.links.filter((e) => (e.source.ieeeAddr === node.ieeeAddr)).forEach((e) => {
+                const lineStyle = (node.type=='EndDevice') ? 'penwidth=1, ' :
+                    (!e.routes.length) ? 'penwidth=0.5, ' : 'penwidth=2, ';
+                const lineWeight = (!e.routes.length) ? `weight=0, color="${colors.line.inactive}", ` :
+                    `weight=1, color="${colors.line.active}", `;
+                const textRoutes = e.routes.map((r) => utils.toNetworkAddressHex(r.destinationAddress));
+                const lineLabels = (!e.routes.length) ? `label="${e.linkquality}"` :
+                    `label="${e.linkquality} (routes: ${textRoutes.join(',')})"`;
+                text += `  "${node.ieeeAddr}" -> "${e.target.ieeeAddr}"`;
+                text += ` [${lineStyle}${lineWeight}${lineLabels}]\n`;
+            });
+        });
 
-        text += "}";
+        text += '}';
 
-        return text.replace(/\0/g, "");
+        return text.replace(/\0/g, '');
     }
 
-    plantuml(topology: Zigbee2MQTTNetworkMap): string {
+    @bind plantuml(topology: Topology): string {
         const text = [];
 
         text.push(`' paste into: https://www.planttext.com/`);
-        text.push("");
-        text.push("@startuml");
+        text.push(``);
+        text.push('@startuml');
 
-        for (const node of topology.nodes.sort((a, b) => a.friendlyName.localeCompare(b.friendlyName))) {
+        topology.nodes.sort((a, b) => a.friendlyName.localeCompare(b.friendlyName)).forEach((node) => {
             // Add friendly name
             text.push(`card ${node.ieeeAddr} [`);
             text.push(`${node.friendlyName}`);
-            text.push("---");
+            text.push(`---`);
 
             // Add the device short network address, ieeaddr and scan note (if any)
             text.push(
-                `${node.ieeeAddr} (${utils.toNetworkAddressHex(node.networkAddress)})${node.failed?.length ? ` failed: ${node.failed.join(",")}` : ""}`,
+                `${node.ieeeAddr} (${utils.toNetworkAddressHex(node.networkAddress)})` +
+                ((node.failed && node.failed.length) ? ` failed: ${node.failed.join(',')}` : ''),
             );
 
             // Add the device model
-            if (node.type !== "Coordinator") {
-                text.push("---");
+            if (node.type !== 'Coordinator') {
+                text.push(`---`);
                 const definition = (this.zigbee.resolveEntity(node.ieeeAddr) as Device).definition;
-                text.push(`${definition?.vendor} ${definition?.description} (${definition?.model})`);
+                if (definition) {
+                    text.push(`${definition.vendor} ${definition.description} (${definition.model})`);
+                } else {
+                    // This model is not supported by zigbee-herdsman-converters, add zigbee model information
+                    text.push(`${node.manufacturerName} ${node.modelID}`);
+                }
             }
 
             // Add the device last_seen timestamp
-            let lastSeen = "unknown";
-            const date = node.type === "Coordinator" ? Date.now() : node.lastSeen;
+            let lastSeen = 'unknown';
+            const date = node.type === 'Coordinator' ? Date.now() : node.lastSeen;
             if (date) {
-                lastSeen = utils.formatDate(date, "relative") as string;
+                lastSeen = utils.formatDate(date, 'relative') as string;
             }
-            text.push("---");
+            text.push(`---`);
             text.push(lastSeen);
-            text.push("]");
-            text.push("");
-        }
+            text.push(`]`);
+            text.push(``);
+        });
 
         /**
          * Add edges between the devices
          * NOTE: There are situations where a device is NOT in the topology, this can be e.g.
          * due to not responded to the lqi scan. In that case we do not add an edge for this device.
          */
-        for (const link of topology.links) {
+        topology.links.forEach((link) => {
             text.push(`${link.sourceIeeeAddr} --> ${link.targetIeeeAddr}: ${link.lqi}`);
-        }
+        });
+        text.push('');
 
-        text.push("");
+        text.push(`@enduml`);
 
-        text.push("@enduml");
-
-        return text.join("\n");
+        return text.join(`\n`);
     }
 
-    async networkScan(includeRoutes: boolean): Promise<Zigbee2MQTTNetworkMap> {
+    async networkScan(includeRoutes: boolean): Promise<Topology> {
         logger.info(`Starting network scan (includeRoutes '${includeRoutes}')`);
-        const lqis = new Map<Device, LQITableEntry[]>();
-        const routingTables = new Map<Device, RoutingTableEntry[]>();
-        const failed = new Map<Device, string[]>();
-        const requestWithRetry = async <T>(request: () => Promise<T>): Promise<T> => {
-            try {
-                const result = await request();
+        const devices = this.zigbee.devices().filter((d) => d.zh.type !== 'GreenPower' && !d.options.disabled);
+        const lqis: Map<Device, zh.LQI> = new Map();
+        const routingTables: Map<Device, zh.RoutingTable> = new Map();
+        const failed: Map<Device, string[]> = new Map();
 
-                return result;
-            } catch {
-                // Network is possibly congested, sleep 5 seconds to let the network settle.
-                await utils.sleep(5);
-                return await request();
-            }
-        };
-
-        for (const device of this.zigbee.devicesIterator((d) => d.type !== "GreenPower" && d.type !== "EndDevice")) {
-            if (device.options.disabled) {
-                continue;
-            }
-
-            const deviceFailures: string[] = [];
-            failed.set(device, deviceFailures);
+        for (const device of devices.filter((d) => d.zh.type != 'EndDevice')) {
+            failed.set(device, []);
             await utils.sleep(1); // sleep 1 second between each scan to reduce stress on network.
 
+            const doRequest = async <T>(request: () => Promise<T>, firstAttempt = true): Promise<T> => {
+                try {
+                    return await request();
+                } catch (error) {
+                    if (!firstAttempt) {
+                        throw error;
+                    } else {
+                        // Network is possibly congested, sleep 5 seconds to let the network settle.
+                        await utils.sleep(5);
+                        return doRequest(request, false);
+                    }
+                }
+            };
+
             try {
-                const result = await requestWithRetry<LQITableEntry[]>(async () => await device.zh.lqi());
+                const result = await doRequest<zh.LQI>(async () => device.zh.lqi());
                 lqis.set(device, result);
                 logger.debug(`LQI succeeded for '${device.name}'`);
             } catch (error) {
-                deviceFailures.push("lqi"); // set above
+                failed.get(device).push('lqi');
                 logger.error(`Failed to execute LQI for '${device.name}'`);
-                // biome-ignore lint/style/noNonNullAssertion: always Error
-                logger.debug((error as Error).stack!);
+                logger.debug(error.stack);
             }
 
             if (includeRoutes) {
                 try {
-                    const result = await requestWithRetry<RoutingTableEntry[]>(async () => await device.zh.routingTable());
+                    const result = await doRequest(async () => device.zh.routingTable());
                     routingTables.set(device, result);
                     logger.debug(`Routing table succeeded for '${device.name}'`);
                 } catch (error) {
-                    deviceFailures.push("routingTable"); // set above
+                    failed.get(device).push('routingTable');
                     logger.error(`Failed to execute routing table for '${device.name}'`);
-                    // biome-ignore lint/style/noNonNullAssertion: always Error
-                    logger.debug((error as Error).stack!);
                 }
             }
         }
 
-        logger.info("Network scan finished");
+        logger.info(`Network scan finished`);
 
-        const topology: Zigbee2MQTTNetworkMap = {nodes: [], links: []};
-
-        // XXX: display GP/disabled devices in the map, better feedback than just hiding them?
-        for (const device of this.zigbee.devicesIterator((d) => d.type !== "GreenPower")) {
-            if (device.options.disabled) {
-                continue;
-            }
-
-            // Add nodes
-            const definition = device.definition
-                ? {
-                      model: device.definition.model,
-                      vendor: device.definition.vendor,
-                      description: device.definition.description,
-                      supports: Array.from(
-                          new Set(
-                              device.exposes().map((e) => {
-                                  return e.name ?? `${e.type} (${e.features?.map((f) => f.name).join(", ")})`;
-                              }),
-                          ),
-                      ).join(", "),
-                  }
-                : undefined;
+        const topology: Topology = {nodes: [], links: []};
+        // Add nodes
+        for (const device of devices) {
+            const definition = device.definition ? {
+                model: device.definition.model,
+                vendor: device.definition.vendor,
+                description: device.definition.description,
+                supports: Array.from(new Set((device.exposes()).map((e) => {
+                    return e.hasOwnProperty('name') ? e.name :
+                        `${e.type} (${e.features.map((f) => f.name).join(', ')})`;
+                }))).join(', '),
+            } : null;
 
             topology.nodes.push({
-                ieeeAddr: device.ieeeAddr,
-                friendlyName: device.name,
-                type: device.zh.type,
-                networkAddress: device.zh.networkAddress,
-                manufacturerName: device.zh.manufacturerName,
-                modelID: device.zh.modelID,
-                failed: failed.get(device),
-                lastSeen: device.zh.lastSeen,
+                ieeeAddr: device.ieeeAddr, friendlyName: device.name, type: device.zh.type,
+                networkAddress: device.zh.networkAddress, manufacturerName: device.zh.manufacturerName,
+                modelID: device.zh.modelID, failed: failed.get(device), lastSeen: device.zh.lastSeen,
                 definition,
             });
         }
 
         // Add links
-        for (const [device, table] of lqis) {
-            for (const neighbor of table) {
+        lqis.forEach((lqi, device) => {
+            for (const neighbor of lqi.neighbors) {
                 if (neighbor.relationship > 3) {
                     // Relationship is not active, skip it
                     continue;
                 }
 
-                let neighborEui64 = neighbor.eui64;
-
                 // Some Xiaomi devices return 0x00 as the neighbor ieeeAddr (obviously not correct).
                 // Determine the correct ieeeAddr based on the networkAddress.
-                if (neighborEui64 === "0x0000000000000000") {
-                    const neighborDevice = this.zigbee.deviceByNetworkAddress(neighbor.nwkAddress);
-
-                    if (neighborDevice) {
-                        neighborEui64 = neighborDevice.ieeeAddr as Eui64;
-                    }
+                const neighborDevice = this.zigbee.deviceByNetworkAddress(neighbor.networkAddress);
+                if (neighbor.ieeeAddr === '0x0000000000000000' && neighborDevice) {
+                    neighbor.ieeeAddr = neighborDevice.ieeeAddr;
                 }
 
-                const link: Zigbee2MQTTNetworkMap["links"][number] = {
-                    source: {ieeeAddr: neighborEui64, networkAddress: neighbor.nwkAddress},
+                const link: Link = {
+                    source: {ieeeAddr: neighbor.ieeeAddr, networkAddress: neighbor.networkAddress},
                     target: {ieeeAddr: device.ieeeAddr, networkAddress: device.zh.networkAddress},
-                    deviceType: neighbor.deviceType,
-                    rxOnWhenIdle: neighbor.rxOnWhenIdle,
+                    linkquality: neighbor.linkquality, depth: neighbor.depth, routes: [],
+                    // DEPRECATED:
+                    sourceIeeeAddr: neighbor.ieeeAddr, targetIeeeAddr: device.ieeeAddr,
+                    sourceNwkAddr: neighbor.networkAddress, lqi: neighbor.linkquality,
                     relationship: neighbor.relationship,
-                    permitJoining: neighbor.permitJoining,
-                    depth: neighbor.depth,
-                    lqi: neighbor.lqi,
-                    routes: [],
-                    // below are @deprecated
-                    sourceIeeeAddr: neighborEui64,
-                    targetIeeeAddr: device.ieeeAddr,
-                    sourceNwkAddr: neighbor.nwkAddress,
-                    linkquality: neighbor.lqi,
                 };
 
                 const routingTable = routingTables.get(device);
-
                 if (routingTable) {
-                    for (const entry of routingTable) {
-                        if (entry.nextHopAddress === neighbor.nwkAddress) {
-                            link.routes.push(entry);
-                        }
-                    }
+                    link.routes = routingTable.table
+                        .filter((t) => t.status === 'ACTIVE' && t.nextHop === neighbor.networkAddress);
                 }
 
                 topology.links.push(link);
             }
-        }
+        });
 
         return topology;
     }

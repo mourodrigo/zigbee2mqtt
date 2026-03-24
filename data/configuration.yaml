@@ -1,0 +1,19 @@
+homeassistant: false
+permit_join: true
+mqtt:
+  base_topic: zigbee2mqtt
+  server: mqtt://localhost
+frontend:
+  port: 8080
+serial:
+  port: /dev/cu.usbserial-0001
+advanced:
+  homeassistant_legacy_entity_attributes: false
+  legacy_api: false
+  legacy_availability_payload: false
+  log_level: debug
+device_options:
+  legacy: false
+devices:
+  '0x8c73dafffe10e2c9':
+    friendly_name: '0x8c73dafffe10e2c9'
