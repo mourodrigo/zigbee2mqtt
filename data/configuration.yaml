@@ -11,5 +11,9 @@ advanced:
   homeassistant_legacy_entity_attributes: false
   legacy_api: false
   legacy_availability_payload: false
+  log_level: debug
 device_options:
   legacy: false
+devices:
+  '0x8c73dafffe10e2c9':
+    friendly_name: '0x8c73dafffe10e2c9'
